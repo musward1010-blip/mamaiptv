@@ -1,0 +1,42 @@
+// Créer une base IndexedDB pour les fichiers TS
+function openDB(callback) {
+    const request = indexedDB.open("IPTV_DB", 1);
+    request.onupgradeneeded = e => {
+        const db = e.target.result;
+        if(!db.objectStoreNames.contains("tsFiles")){
+            db.createObjectStore("tsFiles");
+        }
+    };
+    request.onsuccess = e => callback(e.target.result);
+}
+
+// Sauvegarder un fichier TS
+function saveTSFile(name, fileBlob) {
+    openDB(db => {
+        const tx = db.transaction("tsFiles", "readwrite");
+        tx.objectStore("tsFiles").put(fileBlob, name);
+        tx.oncomplete = () => console.log("TS sauvegardé:", name);
+    });
+}
+
+// Lire un fichier TS pour jouer
+function getTSFile(name, callback) {
+    openDB(db => {
+        const tx = db.transaction("tsFiles", "readonly");
+        const store = tx.objectStore("tsFiles");
+        const request = store.get(name);
+        request.onsuccess = () => {
+            callback(request.result);
+        };
+    });
+}
+
+// Exemple : jouer un TS local
+function playLocalTS(name) {
+    getTSFile(name, blob => {
+        if(blob){
+            const url = URL.createObjectURL(blob);
+            playStream(url); // utilise ta fonction playStream déjà existante
+        }
+    });
+}

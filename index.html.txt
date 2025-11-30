@@ -1,0 +1,216 @@
+ <!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Neo IPTV — Pro</title>
+<style>
+body {
+  margin: 0;
+  background: #0b0c10;
+  color: white;
+  font-family: Arial, sans-serif;
+  height: 100vh;
+  overflow: hidden;
+}
+button {
+  background: #00bfff;
+  color: black;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: 0.3s;
+}
+button:hover { background: #0099cc; }
+input[type="text"], input[type="file"], select {
+  width: 80%;
+  padding: 10px;
+  border: 1px solid #00bfff;
+  border-radius: 8px;
+  background: #1a1a1a;
+  color: white;
+  margin: 10px 0;
+}
+#page1, #page2 { display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; height: 100vh; }
+#page1.active, #page2.active { display: flex; }
+#page1 h1, #page2 h2 { color: #00bfff; }
+.menu { display: flex; flex-direction: column; align-items: center; gap: 15px; margin-top: 10px; }
+.menu button { background: #1a1a1a; color: #00bfff; border: 2px solid #00bfff; border-radius: 10px; padding: 15px 25px; font-size: 18px; }
+.menu button:hover { background: #00bfff; color: #000; }
+#page2 { justify-content: flex-start; padding-top: 80px; }
+#page2 h2 { margin-bottom: 30px; }
+#page2 .menu { margin-top: 0; }
+#page2 .back { margin-top: 40px; }
+#page3 { display: none; flex-direction: row; height: 100vh; }
+aside { width: 30%; background: #1a1a1a; border-right: 2px solid #00bfff; overflow-y: auto; padding: 10px; }
+main { width: 70%; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 10px; }
+h2#title { margin-top: 5px; margin-bottom: 10px; color: #00bfff; text-align: center; }
+video { width: 95%; height: auto; max-height: 70%; border-radius: 12px; background: black; box-shadow: 0 0 20px #00bfff55; }
+.center-btn { margin-top: 15px; display: flex; justify-content: center; width: 100%; }
+.item { background: #1a1a1a; border: 1px solid #00bfff; border-radius: 8px; margin: 8px 0; padding: 10px; cursor: pointer; outline: none; }
+.item:hover, .item:focus { background: #00bfff; color: black; }
+.small { font-size: 13px; color:#cfcfcf; }
+@media (orientation: portrait) {
+  #page3::before { content: "Tournez l’appareil en mode paysage 🔄"; display: block; color: #00bfff; text-align: center; padding: 20px; }
+  aside, main { display: none; }
+}
+</style>
+</head>
+<body>
+
+<section id="page1" class="active">
+  <h1>Neo IPTV</h1>
+  <label>Adresse M3U :</label><br>
+  <input type="text" id="m3uUrl" placeholder="https://exemple.com/liste.m3u8" autocomplete="off" /><br>
+  <button id="btnSaveUrl">Charger</button><br><br>
+  <label>Ou fichier M3U :</label><br>
+  <input type="file" id="m3uFile" accept=".m3u,.txt" /><br><br>
+  <button id="btnContinue">Continuer</button>
+  <p id="status" class="small" style="margin-top:20px;color:#00bfff;"></p>
+</section>
+
+<section id="page2">
+  <h2>Choisissez une catégorie</h2>
+  <div class="menu">
+    <button data-cat="tv">📺 TV en direct</button>
+    <button data-cat="films">🎬 Films</button>
+    <button data-cat="series">🎞️ Séries</button>
+  </div>
+  <div class="back"><button id="btnBackTo1">← Retour</button></div>
+</section>
+
+<section id="page3">
+  <aside id="list"></aside>
+  <main>
+    <h2 id="title"></h2>
+    <video id="player" controls playsinline></video>
+    <div class="center-btn">
+      <button id="btnBackTo2">← Retour</button>
+    </div>
+    <p id="playerInfo" class="small"></p>
+  </main>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.1/dist/hls.min.js"></script>
+
+<script>
+let currentPage = 1;
+let currentCategory = "tv";
+let playlist = { tv: [], films: [], series: [] };
+let hls = null;
+const proxyBase = "https://mama-iptv-web.vercel.app/api/proxy?url="; // TON PROXY
+
+const $ = id => document.getElementById(id);
+
+function showPage(num) {
+  document.querySelectorAll('section').forEach(s => s.style.display='none');
+  $('page'+num).style.display = 'flex';
+  currentPage = num;
+}
+
+$('btnSaveUrl').addEventListener('click', ()=>{
+  const url = $('m3uUrl').value.trim();
+  if(!url){ $('status').textContent="Entrez une adresse M3U"; return;}
+  localStorage.setItem('m3uUrl', url);
+  $('status').textContent="✅ Adresse M3U sauvegardée";
+});
+$('btnContinue').addEventListener('click', ()=>showPage(2));
+$('btnBackTo1').addEventListener('click', ()=>showPage(1));
+$('btnBackTo2').addEventListener('click', ()=>showPage(2));
+
+document.querySelectorAll('#page2 .menu button').forEach(btn=>{
+  btn.addEventListener('click', ()=>openCategory(btn.dataset.cat));
+});
+
+$('m3uFile').addEventListener('change', async ev=>{
+  const f = ev.target.files[0];
+  if(!f) return;
+  const txt = await f.text();
+  parseM3U(txt);
+  alert('Fichier M3U importé: '+f.name);
+});
+
+function parseM3U(text){
+  playlist = { tv: [], films: [], series: [] };
+  const lines = text.replace(/\r/g,'').split('\n').map(l=>l.trim()).filter(l=>l!=='');
+  let lastName = null;
+  for(let line of lines){
+    if(line.startsWith('#EXTINF')){
+      lastName = line.split(',',2)[1] || null;
+    } else if(!line.startsWith('#')){
+      const url = line;
+      const name = lastName || url;
+      const low = (name||'').toLowerCase();
+      if(low.includes('film') || url.toLowerCase().includes('.mp4')) playlist.films.push({name,url});
+      else if(low.includes('serie') || low.includes('série')) playlist.series.push({name,url});
+      else playlist.tv.push({name,url});
+      lastName = null;
+    }
+  }
+}
+
+async function openCategory(cat){
+  currentCategory = cat;
+  showPage(3);
+  await loadPlaylist();
+}
+
+async function loadPlaylist(){
+  const url = localStorage.getItem('m3uUrl');
+  if(!url){ alert('Aucune adresse M3U !'); return;}
+  try{
+    const proxiedUrl = proxyBase + encodeURIComponent(url);
+    const res = await fetch(proxiedUrl);
+    if(!res.ok) throw new Error(res.status);
+    const txt = await res.text();
+    parseM3U(txt);
+    renderCategory(currentCategory);
+  }catch(err){
+    console.error(err);
+    alert('Impossible de charger la playlist via le proxy');
+  }
+}
+
+function renderCategory(cat){
+  const list = $('list'); list.innerHTML='';
+  const arr = playlist[cat] || [];
+  $('title').textContent = cat==='tv'?'📺 TV en direct':cat==='films'?'🎬 Films':'🎞️ Séries';
+  if(!arr.length){ list.innerHTML='<p class="small">Aucune chaîne trouvée</p>'; return; }
+  arr.forEach((it,idx)=>{
+    const d = document.createElement('div');
+    d.className='item'; d.tabIndex=0; d.textContent=it.name;
+    d.addEventListener('click', ()=>playUrl(it.url,it.name));
+    d.addEventListener('keydown', ev=>{ if(ev.key==='Enter') playUrl(it.url,it.name); });
+    list.appendChild(d);
+  });
+}
+
+function destroyHls(){ if(hls){ try{hls.destroy()}catch(e){} hls=null; } }
+
+function playUrl(url,name){
+  const player = $('player');
+  const info = $('playerInfo');
+  info.textContent = name+' — '+url;
+  destroyHls();
+  const finalUrl = proxyBase + encodeURIComponent(url); // PROXY
+  const isM3u8 = finalUrl.split('?')[0].toLowerCase().endsWith('.m3u8');
+  if(isM3u8 && Hls.isSupported()){
+    hls = new Hls();
+    hls.loadSource(finalUrl);
+    hls.attachMedia(player);
+    hls.on(Hls.Events.ERROR,(event,data)=>{ if(data.fatal) alert('Erreur HLS: '+data.type); });
+    player.play().catch(()=>{});
+  } else {
+    try{ player.src = finalUrl; player.load(); player.play().catch(()=>{});}catch(e){alert('Impossible de lire ce flux');}
+  }
+}
+
+// init
+showPage(1);
+const saved = localStorage.getItem('m3uUrl');
+if(saved) $('status').textContent = 'Adresse M3U sauvegardée : '+saved;
+</script>
+</body>
+</html>
